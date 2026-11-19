@@ -1,11 +1,11 @@
 # MILKONTROL transformation
-- [ ] Inspect all 24 original files and retain source inventory.
-- [ ] Migrate original regions, outlets, sales aggregates and provisional KPI.
-- [ ] Create premium management views and representative workspace.
-- [ ] Add Lovable Cloud data, profiles, invite-only authentication and four scoped roles.
-- [ ] Implement five configurable detection scenarios, notifications and verified task workflow.
-- [ ] Add real map, visits with GPS, camera evidence and private photo review.
-- [ ] Add period analytics and genuine PDF / Excel exports.
-- [ ] Verify rules, browser workflows and role isolation; document remaining blockers.
+- [x] Inspect all 24 original files and retain source inventory.
+- [x] Migrate original regions, outlets, sales aggregates and provisional KPI.
+- [x] Create premium management views and representative workspace.
+- [x] Add Lovable Cloud data, profiles, invite-only authentication and four scoped roles.
+- [x] Implement five configurable detection scenarios, notifications and verified task workflow.
+- [x] Add real map, visits with GPS, camera evidence and private photo review.
+- [x] Add period analytics and genuine PDF / Excel exports.
+- [x] Verify rules, browser workflows and role isolation; document remaining blockers.
 - [ ] Production records, original user identities and real outlet coordinates — awaiting company exports.
 - [ ] Production cutover and pilot — awaiting verified data and publication.
