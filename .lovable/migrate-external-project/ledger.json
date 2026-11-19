@@ -1,0 +1,19 @@
+{
+  "source": "files_20_281_29_2.zip",
+  "capabilities": [
+    {"capability":"code","source":"24 original files","outcome":"migrate","status":"inspected","next_action":"Port HTML workflows to TanStack routes; preserve reference source."},
+    {"capability":"schema","source":"No database schema; in-memory JavaScript","outcome":"migrate","status":"pending","next_action":"Create scoped operational tables in Lovable Cloud."},
+    {"capability":"records","source":"Deterministic generated demo outlets, employees, regional coordinates","outcome":"migrate demo only","status":"pending","next_action":"Preserve fixed demo records; request production exports separately."},
+    {"capability":"auth identities","source":"Four role-selection cards, no real accounts","outcome":"migrate","status":"pending","next_action":"Implement invite-only accounts; original real-user export remains unavailable."},
+    {"capability":"authorization","source":"Client-only filters; assistant bypasses scope","outcome":"replace","status":"pending","next_action":"Enforce database roles and scoped policies."},
+    {"capability":"uploaded file bytes","source":"Synthetic photo SVG and generated canvas fallback","outcome":"replace","status":"pending","next_action":"Actual camera capture and private storage; no original real photos attached."},
+    {"capability":"external providers","source":"Claude artifact APIs and XLSX CDN","outcome":"adapt","status":"pending","next_action":"Browser downloads; Lovable AI configuration explicitly tracked."},
+    {"capability":"public endpoints","source":"No endpoints in application","outcome":"not applicable","status":"verified","next_action":null},
+    {"capability":"callbacks","source":"No OAuth callbacks","outcome":"not applicable","status":"verified","next_action":null},
+    {"capability":"webhooks","source":"None detected","outcome":"not applicable","status":"verified","next_action":null},
+    {"capability":"schedules","source":"No automatic schedule","outcome":"implement detection","status":"pending","next_action":"Database rule detection with deduplicated alerts."},
+    {"capability":"secrets","source":"No application secret configuration","outcome":"no source credentials required","status":"verified","next_action":null},
+    {"capability":"cutover","source":"Standalone HTML prototype; no production URL supplied","outcome":"pending","status":"pending","next_action":"Publish after verified pilot and production data import."},
+    {"capability":"verification","source":"No original tests","outcome":"add tests","status":"pending","next_action":"Rules, browser flows, exports, permissions and mobile verification."}
+  ]
+}
