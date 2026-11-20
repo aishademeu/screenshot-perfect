@@ -351,3 +351,10 @@ CREATE POLICY photo_reports_delete_own ON storage.objects
     bucket_id = 'photo-reports'
     AND (storage.foldername(name))[1] = auth.uid()::text
   );
+
+-- Restrict profile and notification updates to the fields used by the UI.
+REVOKE UPDATE ON public.profiles FROM authenticated;
+GRANT UPDATE (display_name, avatar_url) ON public.profiles TO authenticated;
+
+REVOKE UPDATE ON public.notifications FROM authenticated;
+GRANT UPDATE (read_at) ON public.notifications TO authenticated;
