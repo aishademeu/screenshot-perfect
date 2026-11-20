@@ -15,6 +15,13 @@
       "when": 1795162918594,
       "tag": "0001_restrict_detection_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795170000000,
+      "tag": "0002_enforce_row_scope",
+      "breakpoints": true
     }
   ]
 }
