@@ -17,32 +17,18 @@ function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message);
-    } else {
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
       navigate({ to: "/" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось войти. Проверьте данные и попробуйте снова.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
-  const DEMO_ROLES = [
-    { role: "ceo", name: "Асхат Нурланов", title: "Генеральный директор", email: "ceo@dairymilk.kz" },
-    { role: "sd", name: "Гульнара Ахметова", title: "Директор продаж", email: "sd@dairymilk.kz" },
-    { role: "rd", name: "Марат Сейтов", title: "Региональный директор (Алматы)", email: "rd.almaty@dairymilk.kz", region_id: 1 },
-    { role: "rep", name: "Ерлан К.", title: "Торгпред (Алматы)", email: "rep.erlan@dairymilk.kz", region_id: 1, employee_id: 1 },
-  ];
 
-  function loginAsDemo(demo: typeof DEMO_ROLES[0]) {
-    localStorage.setItem("milkontrol_demo_session", JSON.stringify({
-      id: "demo-" + demo.role,
-      email: demo.email,
-      role: demo.role,
-      region_id: (demo as any).region_id ?? null,
-      employee_id: (demo as any).employee_id ?? null,
-    }));
-    window.location.href = "/";
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-brand-bg px-4 py-8">
@@ -50,25 +36,6 @@ function LoginPage() {
         <div className="text-center mb-6">
           <div className="font-display text-5xl font-semibold text-brand-primary mb-2">Milkontrol</div>
           <p className="text-brand-muted text-sm">DairyMilk · контроль торговой команды</p>
-        </div>
-
-        {/* Demo role quick-switch cards */}
-        <div className="mb-6">
-          <div className="text-xs font-semibold text-brand-muted uppercase tracking-wider mb-2 text-center">
-            Быстрый вход в роли (демо)
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {DEMO_ROLES.map((d) => (
-              <button
-                key={d.role}
-                onClick={() => loginAsDemo(d)}
-                className="bg-white border border-brand-border rounded-xl p-3 text-left hover:border-brand-primary hover:shadow-xs transition-all cursor-pointer"
-              >
-                <div className="font-semibold text-sm text-foreground">{d.title}</div>
-                <div className="text-xs text-brand-muted">{d.name}</div>
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="bg-white border border-brand-border rounded-2xl p-6 shadow-xs">
