@@ -46,7 +46,8 @@ function AlertsPage() {
   const [assignModal, setAssignModal] = useState<Alert | null>(null);
   const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
   const [taskForm, setTaskForm] = useState({ employeeId: 0, deadline: "" });
-  const [submitting, setSubmitting] = useState(false);\n  const [actionError, setActionError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => { if (role) load(); }, [role, regionId]);
 
@@ -81,7 +82,12 @@ function AlertsPage() {
   }
 
   async function resolveAlert(id: string) {
-    await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    setActionError(null);
+    const { error } = await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    if (error) {
+      setActionError("Не удалось закрыть сигнал: " + error.message);
+      return;
+    }
     setAlerts((prev) => prev.map((a) => a.id === id ? { ...a, status: "resolved" } : a));
   }
 
@@ -122,7 +128,9 @@ function AlertsPage() {
         <p className="text-brand-muted text-sm mt-1">Автоматически обнаруженные проблемы</p>
       </div>
 
-      {actionError && <p role="alert" className="text-sm text-status-red bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}\n\n      <div className="flex gap-2 border-b border-brand-border">
+      {actionError && <p role="alert" className="text-sm text-status-red bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}
+
+      <div className="flex gap-2 border-b border-brand-border">
         {[["alerts", "Сигналы"], ["tasks", "Задачи"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === key ? "border-brand-primary text-brand-primary" : "border-transparent text-brand-muted"}`}>
