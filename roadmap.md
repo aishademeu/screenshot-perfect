@@ -1,11 +1,11 @@
-# MILKONTROL transformation
-- [x] Inspect all 24 original files and retain source inventory.
-- [x] Migrate original regions, outlets, sales aggregates and provisional KPI.
-- [x] Create premium management views and representative workspace.
-- [x] Add Lovable Cloud data, profiles, invite-only authentication and four scoped roles.
-- [x] Implement five configurable detection scenarios, notifications and verified task workflow.
-- [x] Add real map, visits with GPS, camera evidence and private photo review.
-- [x] Add period analytics and genuine PDF / Excel exports.
-- [x] Verify rules, browser workflows and role isolation; document remaining blockers.
-- [ ] Production records, original user identities and real outlet coordinates — awaiting company exports.
-- [ ] Production cutover and pilot — awaiting verified data and publication.
+# Dairy.org audit and repair
+- [ ] Audit existing routes, hooks, components, migrations, functions, grants, storage, tests and scripts.
+- [ ] Remove fake login; enforce active authenticated scoped access and invite-only signup.
+- [ ] Harden every RLS policy and private photo storage; add transactional invitations and audit.
+- [ ] Add idempotent explicitly DEMO seed without overwriting existing records.
+- [ ] Connect task workflow, GPS check-in, real photo upload and manager review.
+- [ ] Repair period analytics, all views, exports, settings, users, audit, notifications and profile.
+- [ ] Apply Dairy.org branding and consistent professional Russian interface.
+- [ ] Run tests, lint, automated build signals and authenticated browser checks; write honest audit report.
+- [ ] First permanent company administrator — requires the user's chosen account.
+- [ ] Production data, verified outlet coordinates and publication — requires company input.
