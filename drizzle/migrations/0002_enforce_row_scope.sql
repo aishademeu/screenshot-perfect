@@ -201,3 +201,95 @@ CREATE POLICY task_update_manager ON public.tasks
         AND public.is_manager(a.region_id)
     )
   );
+
+
+-- Keep automated detection aligned with the current calendar month.
+CREATE OR REPLACE FUNCTION public.detect_problems(
+  target_period date DEFAULT date_trunc('month', CURRENT_DATE)::date
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public
+AS $$
+DECLARE
+  s record;
+BEGIN
+  SELECT coalesce(max(missed_visits),5) AS misses,
+         coalesce(max(sales_drop),30) AS drop_pct,
+         coalesce(max(plan_threshold),50) AS plan_pct
+    INTO s
+    FROM public.detection_settings;
+
+  INSERT INTO public.alerts(condition_key,kind,title,priority,region_id,employee_id,evidence,demo)
+  SELECT 'miss:'||e.id||':'||target_period,'missed_visits','Five planned visits missed','high',
+         e.region_id,e.id,
+         jsonb_build_object('count',count(*),'outlets',jsonb_agg(p.outlet_id),'dates',jsonb_agg(p.scheduled_at)),
+         e.demo
+  FROM public.planned_visits p
+  JOIN public.retail_outlets o ON o.id=p.outlet_id
+  JOIN public.employees e ON e.id=o.employee_id
+  WHERE p.completed_at IS NULL AND p.scheduled_at<now()
+    AND date_trunc('month',p.scheduled_at)::date=target_period
+  GROUP BY e.id HAVING count(*)>=s.misses
+  ON CONFLICT(condition_key) DO NOTHING;
+
+  INSERT INTO public.alerts(condition_key,kind,title,priority,region_id,employee_id,evidence,demo)
+  SELECT 'drop:'||e.id||':'||target_period,'sales_drop','Sales decreased by 30% or more','high',
+         e.region_id,e.id,
+         jsonb_build_object('current',sum(c.amount),'previous',sum(p.amount),
+           'change',round((sum(c.amount)/nullif(sum(p.amount),0)-1)*100,2)),
+         e.demo
+  FROM public.employees e
+  JOIN public.retail_outlets o ON o.employee_id=e.id
+  JOIN public.sales_records c ON c.outlet_id=o.id AND c.period=target_period
+  JOIN public.sales_records p ON p.outlet_id=o.id AND p.period=(target_period-interval '1 month')::date
+  GROUP BY e.id HAVING sum(p.amount)>0 AND sum(c.amount)<=sum(p.amount)*(1-s.drop_pct/100)
+  ON CONFLICT(condition_key) DO NOTHING;
+
+  INSERT INTO public.alerts(condition_key,kind,title,priority,region_id,employee_id,outlet_id,evidence,demo)
+  SELECT 'missing:'||q.id,'missing_freezer','Company freezer confirmed missing','critical',
+         o.region_id,o.employee_id,o.id,
+         jsonb_build_object('equipment',q.id,'last_verified',q.last_verified_at),o.demo
+  FROM public.equipment q JOIN public.retail_outlets o ON o.id=q.outlet_id
+  WHERE q.expected AND q.status='missing'
+  ON CONFLICT(condition_key) DO NOTHING;
+
+  INSERT INTO public.alerts(condition_key,kind,title,priority,region_id,employee_id,outlet_id,evidence,demo)
+  SELECT 'idle:'||q.id||':'||target_period,'freezer_without_sales','Installed freezer has no sales','medium',
+         o.region_id,o.employee_id,o.id,
+         jsonb_build_object('equipment',q.id,'sales',c.amount,'period',target_period),o.demo
+  FROM public.equipment q
+  JOIN public.retail_outlets o ON o.id=q.outlet_id
+  JOIN public.sales_records c ON c.outlet_id=o.id AND c.period=target_period
+  WHERE q.status='installed' AND c.amount=0
+  ON CONFLICT(condition_key) DO NOTHING;
+
+  INSERT INTO public.alerts(condition_key,kind,title,priority,region_id,employee_id,evidence,demo)
+  SELECT 'plan:'||e.id||':'||target_period,'low_plan','Sales plan completion at or below 50%','medium',
+         e.region_id,e.id,
+         jsonb_build_object('current',sum(c.amount),'target',sum(c.plan),
+           'achievement',round(sum(c.amount)/nullif(sum(c.plan),0)*100,2),'gap',sum(c.plan)-sum(c.amount)),
+         e.demo
+  FROM public.employees e
+  JOIN public.retail_outlets o ON o.employee_id=e.id
+  JOIN public.sales_records c ON c.outlet_id=o.id AND c.period=target_period
+  GROUP BY e.id
+  HAVING sum(c.plan)>0 AND sum(c.amount)<=sum(c.plan)*s.plan_pct/100
+  ON CONFLICT(condition_key) DO NOTHING;
+
+  INSERT INTO public.notifications(user_id,alert_id)
+  SELECT u.user_id,a.id
+  FROM public.alerts a
+  JOIN public.user_roles u ON u.role IN ('sd','ceo') OR (u.role='rd' AND u.region_id=a.region_id)
+  WHERE a.status<>'resolved'
+  ON CONFLICT DO NOTHING;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.refresh_detection()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public
+AS $$
+BEGIN
+  PERFORM public.detect_problems(date_trunc('month', CURRENT_DATE)::date);
+  RETURN NEW;
+END;
+$$;
