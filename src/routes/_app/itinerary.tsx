@@ -10,9 +10,15 @@ export const Route = createFileRoute("/_app/itinerary")({
 });
 
 interface Stop {
-  id: number; name: string; address: string;
-  latitude: number | null; longitude: number | null;
-  checkedIn: boolean; checkinDistance?: number; photoSubmitted: boolean;
+  id: number;
+  name: string;
+  address: string;
+  latitude: number | null;
+  longitude: number | null;
+  checkedIn: boolean;
+  plannedVisitId: string | null;
+  checkinDistance?: number;
+  photoSubmitted: boolean;
 }
 
 function RoutePage() {
@@ -22,60 +28,143 @@ function RoutePage() {
   const [gpsLoading, setGpsLoading] = useState<number | null>(null);
   const [camModal, setCamModal] = useState<Stop | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  useEffect(() => { if (employeeId) load(); }, [employeeId]);
+  useEffect(() => {
+    if (employeeId) load();
+    else setLoading(false);
+  }, [employeeId]);
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   async function load() {
     setLoading(true);
-    const { data: outlets } = await supabase.from("retail_outlets").select("id, name, address, latitude, longitude").eq("employee_id", employeeId!);
-    const { data: visits } = await supabase.from("planned_visits").select("outlet_id, completed_at").in("outlet_id", (outlets ?? []).map((o) => o.id));
-    const { data: photos } = await supabase.from("photo_reports").select("outlet_id, status").in("outlet_id", (outlets ?? []).map((o) => o.id)).eq("user_id", user?.id ?? "");
+    try {
+      const { data: outlets, error: outletsError } = await supabase
+        .from("retail_outlets")
+        .select("id, name, address, latitude, longitude")
+        .eq("employee_id", employeeId!);
+      if (outletsError) throw outletsError;
 
-    const visitMap = new Map((visits ?? []).map((v) => [v.outlet_id, !!v.completed_at]));
-    const photoMap = new Map((photos ?? []).map((p) => [p.outlet_id, true]));
+      const outletIds = (outlets ?? []).map((outlet) => outlet.id);
+      if (!outletIds.length) {
+        setStops([]);
+        return;
+      }
 
-    setStops((outlets ?? []).map((o) => ({
-      ...o,
-      checkedIn: visitMap.get(o.id) ?? false,
-      photoSubmitted: photoMap.get(o.id) ?? false,
-    })));
-    setLoading(false);
+      const { data: visits, error: visitsError } = await supabase
+        .from("planned_visits")
+        .select("id, outlet_id, scheduled_at, completed_at")
+        .in("outlet_id", outletIds)
+        .order("scheduled_at", { ascending: true });
+      if (visitsError) throw visitsError;
+
+      const { data: photos, error: photosError } = await supabase
+        .from("photo_reports")
+        .select("outlet_id, status")
+        .in("outlet_id", outletIds)
+        .eq("user_id", user?.id ?? "");
+      if (photosError) throw photosError;
+
+      const visitMap = new Map<number, { completed: boolean; plannedVisitId: string | null }>();
+      for (const visit of visits ?? []) {
+        const current = visitMap.get(visit.outlet_id);
+        if (!current || (!visit.completed_at && current.completed)) {
+          visitMap.set(visit.outlet_id, {
+            completed: !!visit.completed_at,
+            plannedVisitId: visit.completed_at ? null : visit.id,
+          });
+        }
+      }
+      const photoMap = new Map((photos ?? []).map((photo) => [photo.outlet_id, true]));
+
+      setStops((outlets ?? []).map((outlet) => ({
+        ...outlet,
+        checkedIn: visitMap.get(outlet.id)?.completed ?? false,
+        plannedVisitId: visitMap.get(outlet.id)?.plannedVisitId ?? null,
+        photoSubmitted: photoMap.get(outlet.id) ?? false,
+      })));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Не удалось загрузить маршрут.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function checkIn(stop: Stop) {
     setGpsError(null);
+    setActionError(null);
+    if (!user) {
+      setGpsError("Для регистрации визита необходимо войти в аккаунт.");
+      return;
+    }
+    if (stop.latitude === null || stop.longitude === null) {
+      setGpsError("У этой торговой точки не указаны координаты. Визит не зарегистрирован.");
+      return;
+    }
+
     setGpsLoading(stop.id);
+    if (!navigator.geolocation) {
+      setGpsError("Этот браузер не поддерживает геолокацию.");
+      setGpsLoading(null);
+      return;
+    }
+
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-        const dist = stop.latitude && stop.longitude ? Math.round(haversineMeters(lat, lng, stop.latitude, stop.longitude)) : null;
+        try {
+          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+          const dist = Math.round(haversineMeters(lat, lng, stop.latitude!, stop.longitude!));
+          const { data: settings, error: settingsError } = await supabase
+            .from("detection_settings")
+            .select("geofence_meters")
+            .single();
+          if (settingsError) throw settingsError;
+          const fence = settings?.geofence_meters ?? 150;
 
-        const { data: settings } = await supabase.from("detection_settings").select("geofence_meters").single();
-        const fence = settings?.geofence_meters ?? 150;
+          if (dist > fence) {
+            setGpsError(`Вы находитесь в ${dist} м от точки. Допустимо: ${fence} м.`);
+            return;
+          }
 
-        if (dist !== null && dist > fence) {
-          setGpsError(`Вы находитесь в ${dist} м от точки. Допустимо: ${fence} м.`);
+          // The browser supplies coordinates, so this client-side check is not
+          // sufficient proof of location. Keep verified=false until the server
+          // validates the visit independently.
+          const { error: visitError } = await supabase.from("visits").insert({
+            outlet_id: stop.id,
+            user_id: user.id,
+            latitude: lat,
+            longitude: lng,
+            accuracy,
+            verified: false,
+          });
+          if (visitError) throw visitError;
+
+          if (stop.plannedVisitId) {
+            const { data: completedVisit, error: planError } = await supabase
+              .from("planned_visits")
+              .update({ completed_at: new Date().toISOString() })
+              .eq("id", stop.plannedVisitId)
+              .is("completed_at", null)
+              .select("id")
+              .maybeSingle();
+            if (planError) throw planError;
+            if (!completedVisit) {
+              throw new Error("Плановый визит уже завершён или больше недоступен. Обновите маршрут.");
+            }
+          }
+          setStops((prev) => prev.map((item) => item.id === stop.id
+            ? { ...item, checkedIn: true, plannedVisitId: null, checkinDistance: dist }
+            : item));
+        } catch (error) {
+          setActionError(error instanceof Error ? error.message : "Не удалось сохранить визит.");
+        } finally {
           setGpsLoading(null);
-          return;
         }
-
-        const { error } = await supabase.from("visits").insert({
-          outlet_id: stop.id,
-          user_id: user!.id,
-          latitude: lat,
-          longitude: lng,
-          accuracy,
-          verified: dist !== null && dist <= fence,
-        });
-
-        if (!error) {
-          // Mark planned visit complete
-          await supabase.from("planned_visits").update({ completed_at: new Date().toISOString() }).eq("outlet_id", stop.id).is("completed_at", null);
-          setStops((prev) => prev.map((s) => s.id === stop.id ? { ...s, checkedIn: true, checkinDistance: dist ?? undefined } : s));
-        }
-        setGpsLoading(null);
       },
       (err) => {
         setGpsError(`GPS недоступен: ${err.message}`);
@@ -86,46 +175,94 @@ function RoutePage() {
   }
 
   async function openCamera(stop: Stop) {
-    setCamModal(stop);
+    setActionError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setActionError("Камера недоступна в этом браузере.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCamModal(stop);
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          void videoRef.current.play().catch(() => {
+            setActionError("Не удалось запустить камеру. Разрешите доступ к камере и попробуйте снова.");
+          });
+        }
+      });
     } catch {
-      // camera unavailable — will use canvas fallback
+      setActionError("Не удалось открыть камеру. Проверьте разрешение на её использование.");
+      stopCamera();
     }
   }
 
   async function capturePhoto(stop: Stop) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 640; canvas.height = 480;
-    const ctx = canvas.getContext("2d")!;
-    if (videoRef.current && videoRef.current.videoWidth) {
-      ctx.drawImage(videoRef.current, 0, 0, 640, 480);
-    } else {
-      ctx.fillStyle = "#31487A"; ctx.fillRect(0, 0, 640, 480);
-      ctx.fillStyle = "#D9E1F1"; ctx.fillRect(180, 100, 280, 300);
+    setActionError(null);
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setActionError("Камера ещё не готова. Подождите немного и попробуйте снова.");
+      return;
     }
-    // GPS stamp
-    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 440, 640, 40);
-    ctx.fillStyle = "#fff"; ctx.font = "14px sans-serif";
-    ctx.fillText(`${stop.name} · ${new Date().toLocaleString("ru-KZ")}`, 12, 466);
+    if (!user) {
+      setActionError("Для отправки фото необходимо войти в аккаунт.");
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setActionError("Не удалось подготовить фото.");
+      return;
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const stampHeight = Math.max(36, Math.round(canvas.height * 0.08));
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, canvas.height - stampHeight, canvas.width, stampHeight);
+    ctx.fillStyle = "#fff";
+    ctx.font = `${Math.max(12, Math.round(canvas.width * 0.022))}px sans-serif`;
+    ctx.fillText(`${stop.name} · ${new Date().toLocaleString("ru-KZ")}`, 12, canvas.height - Math.round(stampHeight * 0.35));
 
     canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      const path = `${user!.id}/${stop.id}-${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage.from("photo-reports").upload(path, blob, { contentType: "image/jpeg" });
-      if (!upErr) {
-        await supabase.from("photo_reports").insert({ outlet_id: stop.id, user_id: user!.id, storage_path: path, status: "pending" });
-        setStops((prev) => prev.map((s) => s.id === stop.id ? { ...s, photoSubmitted: true } : s));
+      if (!blob) {
+        setActionError("Не удалось получить изображение с камеры.");
+        return;
       }
-      stopCamera();
-    }, "image/jpeg", 0.8);
+      const path = `${user.id}/${stop.id}-${Date.now()}.jpg`;
+      try {
+        const { error: uploadError } = await supabase.storage
+          .from("photo-reports")
+          .upload(path, blob, { contentType: "image/jpeg" });
+        if (uploadError) throw uploadError;
+
+        const { error: insertError } = await supabase.from("photo_reports").insert({
+          outlet_id: stop.id,
+          user_id: user.id,
+          storage_path: path,
+          status: "pending",
+        });
+        if (insertError) {
+          await supabase.storage.from("photo-reports").remove([path]);
+          throw insertError;
+        }
+
+        setStops((prev) => prev.map((item) => item.id === stop.id
+          ? { ...item, photoSubmitted: true }
+          : item));
+        stopCamera();
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "Не удалось отправить фотоотчёт.");
+      }
+    }, "image/jpeg", 0.85);
   }
 
   function stopCamera() {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
     setCamModal(null);
   }
 
@@ -137,9 +274,9 @@ function RoutePage() {
         <h1 className="font-display text-4xl font-semibold">Маршрут</h1>
         <p className="text-brand-muted text-sm mt-1">Плановые визиты на сегодня</p>
       </div>
-      {gpsError && (
+      {(gpsError || actionError) && (
         <div className="flex gap-2 items-center bg-red-50 border border-red-200 text-status-red text-sm px-4 py-3 rounded-xl">
-          <AlertCircle size={15} /> {gpsError}
+          <AlertCircle size={15} /> {gpsError || actionError}
         </div>
       )}
       <div className="space-y-3">
@@ -177,7 +314,6 @@ function RoutePage() {
         {stops.length === 0 && <p className="text-brand-muted text-sm text-center py-8">Нет плановых визитов</p>}
       </div>
 
-      {/* Camera modal */}
       {camModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-4">

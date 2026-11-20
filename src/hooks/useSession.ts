@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import type { User, Session } from '@supabase/supabase-js';
-import type { AppRole, SessionContext } from '@/lib/roles';
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import type { User, Session } from "@supabase/supabase-js";
+import type { AppRole, SessionContext } from "@/lib/roles";
 
-/** Returns the current Supabase session and MILKONTROL role context. */
+/** Returns the authenticated Supabase user and their server-assigned role. */
 export function useSession(): SessionContext & { user: User | null; session: Session | null } {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -12,80 +12,59 @@ export function useSession(): SessionContext & { user: User | null; session: Ses
   const [employeeId, setEmployeeId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadRole(userId: string) {
-    const { data } = await supabase
-      .from('user_roles')
-      .select('role, region_id, employee_id')
-      .eq('user_id', userId)
-      .limit(1)
-      .single();
-    if (data) {
-      setRole(data.role as AppRole);
-      setRegionId(data.region_id);
-      setEmployeeId(data.employee_id);
-    } else {
+  useEffect(() => {
+    let active = true;
+
+    async function applySession(nextSession: Session | null) {
+      if (!active) return;
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
       setRole(null);
       setRegionId(null);
       setEmployeeId(null);
+
+      if (!nextSession?.user) {
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("user_roles")
+        .select("role, region_id, employee_id")
+        .eq("user_id", nextSession.user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (!active) return;
+      if (error) {
+        console.error("[Auth] Could not load the user's assigned role:", error.message);
+      } else if (data) {
+        setRole(data.role as AppRole);
+        setRegionId(data.region_id);
+        setEmployeeId(data.employee_id);
+      }
+      setLoading(false);
     }
-  }
 
-  useEffect(() => {
-    // Initial session load
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadRole(session.user.id).finally(() => setLoading(false));
-      } else {
-        // Check for local demo session if no real Supabase session
-        if (typeof window !== 'undefined') {
-          const raw = localStorage.getItem('milkontrol_demo_session');
-          if (raw) {
-            try {
-              const parsed = JSON.parse(raw);
-              setUser({ id: parsed.id, email: parsed.email } as any);
-              setRole(parsed.role as AppRole);
-              setRegionId(parsed.region_id ?? null);
-              setEmployeeId(parsed.employee_id ?? null);
-              setLoading(false);
-              return;
-            } catch {}
-          }
-        }
-        setLoading(false);
-      }
+    void supabase.auth.getSession()
+      .then(({ data: { session: initialSession }, error }) => {
+        if (error) console.error("[Auth] Could not restore session:", error.message);
+        return applySession(initialSession);
+      })
+      .catch((error) => {
+        console.error("[Auth] Session initialization failed:", error);
+        if (active) setLoading(false);
+      });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      void applySession(nextSession);
     });
 
-    // Subscribe to auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadRole(session.user.id).finally(() => setLoading(false));
-      } else {
-        if (typeof window !== 'undefined') {
-          const raw = localStorage.getItem('milkontrol_demo_session');
-          if (raw) {
-            try {
-              const parsed = JSON.parse(raw);
-              setUser({ id: parsed.id, email: parsed.email } as any);
-              setRole(parsed.role as AppRole);
-              setRegionId(parsed.region_id ?? null);
-              setEmployeeId(parsed.employee_id ?? null);
-              setLoading(false);
-              return;
-            } catch {}
-          }
-        }
-        setRole(null);
-        setRegionId(null);
-        setEmployeeId(null);
-        setLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   return { user, session, userId: user?.id ?? null, role, regionId, employeeId, loading };

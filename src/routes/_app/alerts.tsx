@@ -47,6 +47,7 @@ function AlertsPage() {
   const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
   const [taskForm, setTaskForm] = useState({ employeeId: 0, deadline: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => { if (role) load(); }, [role, regionId]);
 
@@ -81,24 +82,41 @@ function AlertsPage() {
   }
 
   async function resolveAlert(id: string) {
-    await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    setActionError(null);
+    const { error } = await supabase.from("alerts").update({ status: "resolved" }).eq("id", id);
+    if (error) {
+      setActionError("Не удалось закрыть сигнал: " + error.message);
+      return;
+    }
     setAlerts((prev) => prev.map((a) => a.id === id ? { ...a, status: "resolved" } : a));
   }
 
   async function assignTask() {
     if (!assignModal || !taskForm.employeeId || !taskForm.deadline) return;
     setSubmitting(true);
-    // Ensure alert status is 'detected'
-    await supabase.from("alerts").update({ status: "in_progress" }).eq("id", assignModal.id);
-    await supabase.from("tasks").upsert({
-      alert_id: assignModal.id,
-      assigned_employee_id: taskForm.employeeId,
-      deadline: new Date(taskForm.deadline).toISOString(),
-      status: "assigned",
-    });
-    setAssignModal(null);
-    setSubmitting(false);
-    await load();
+    setActionError(null);
+    try {
+      const { error: alertError } = await supabase
+        .from("alerts")
+        .update({ status: "in_progress" })
+        .eq("id", assignModal.id);
+      if (alertError) throw alertError;
+
+      const { error: taskError } = await supabase.from("tasks").upsert({
+        alert_id: assignModal.id,
+        assigned_employee_id: taskForm.employeeId,
+        deadline: new Date(taskForm.deadline).toISOString(),
+        status: "assigned",
+      }, { onConflict: "alert_id" });
+      if (taskError) throw taskError;
+
+      setAssignModal(null);
+      await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Не удалось назначить задачу.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>;
@@ -109,6 +127,8 @@ function AlertsPage() {
         <h1 className="font-display text-4xl font-semibold">Сигналы</h1>
         <p className="text-brand-muted text-sm mt-1">Автоматически обнаруженные проблемы</p>
       </div>
+
+      {actionError && <p role="alert" className="text-sm text-status-red bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}
 
       <div className="flex gap-2 border-b border-brand-border">
         {[["alerts", "Сигналы"], ["tasks", "Задачи"]].map(([key, label]) => (
@@ -153,7 +173,7 @@ function AlertsPage() {
                       Назначить
                     </button>
                   )}
-                  {a.status !== "resolved" && (
+                  {canAssignTasks(role) && a.status !== "resolved" && (
                     <button onClick={() => resolveAlert(a.id)}
                       className="text-xs px-3 py-1.5 border border-brand-border rounded-lg text-brand-muted hover:border-brand-primary">
                       Решено

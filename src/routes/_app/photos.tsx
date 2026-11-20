@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useSession } from "@/hooks/useSession";
+import { canReviewPhotos } from "@/lib/roles";
 import { formatDate, formatTime } from "@/lib/format";
 import { Camera, CheckCircle, XCircle, Loader2 } from "lucide-react";
 
@@ -17,10 +18,13 @@ interface PhotoReport {
 
 function PhotosPage() {
   const { role, regionId } = useSession();
+  const canReview = canReviewPhotos(role);
   const [photos, setPhotos] = useState<PhotoReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectModal, setRejectModal] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   useEffect(() => { if (role) load(); }, [role, regionId]);
 
@@ -28,14 +32,24 @@ function PhotosPage() {
     setLoading(true);
     let oq = supabase.from("retail_outlets").select("id, name");
     if (role === "rd" && regionId) oq = oq.eq("region_id", regionId);
-    const { data: outlets } = await oq;
+    const { data: outlets, error: outletsError } = await oq;
+    if (outletsError) {
+      setActionError("Не удалось загрузить торговые точки: " + outletsError.message);
+      setLoading(false);
+      return;
+    }
     const oMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
     const oids = (outlets ?? []).map((o) => o.id);
 
-    const { data: pData } = await supabase
+    const { data: pData, error: photosError } = await supabase
       .from("photo_reports").select("*")
       .in("outlet_id", oids.length ? oids : [0])
       .order("created_at", { ascending: false }).limit(50);
+    if (photosError) {
+      setActionError("Не удалось загрузить фотоотчёты: " + photosError.message);
+      setLoading(false);
+      return;
+    }
 
     const withUrls = await Promise.all((pData ?? []).map(async (p) => {
       const { data } = await supabase.storage.from("photo-reports").createSignedUrl(p.storage_path, 3600);
@@ -46,16 +60,27 @@ function PhotosPage() {
   }
 
   async function approve(id: string) {
-    await supabase.from("photo_reports").update({ status: "approved" }).eq("id", id);
-    setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, status: "approved" } : p));
+    setActionError(null);
+    setSavingId(id);
+    const { error } = await supabase.from("photo_reports").update({ status: "approved" }).eq("id", id);
+    if (error) setActionError("Не удалось подтвердить фото: " + error.message);
+    else setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, status: "approved" } : p));
+    setSavingId(null);
   }
 
   async function reject(id: string) {
     if (!rejectReason.trim()) return;
-    await supabase.from("photo_reports").update({ status: "rejected", rejection_reason: rejectReason }).eq("id", id);
-    setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, status: "rejected", rejection_reason: rejectReason } : p));
-    setRejectModal(null);
-    setRejectReason("");
+    setActionError(null);
+    setSavingId(id);
+    const reason = rejectReason.trim();
+    const { error } = await supabase.from("photo_reports").update({ status: "rejected", rejection_reason: reason }).eq("id", id);
+    if (error) setActionError("Не удалось отклонить фото: " + error.message);
+    else {
+      setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, status: "rejected", rejection_reason: reason } : p));
+      setRejectModal(null);
+      setRejectReason("");
+    }
+    setSavingId(null);
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>;
@@ -73,6 +98,8 @@ function PhotosPage() {
         <p className="text-brand-muted text-sm mt-1">Проверка фотографий с торговых точек</p>
       </div>
 
+      {actionError && <p role="alert" className="text-sm text-status-red bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}
+
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {photos.length === 0 && <p className="text-brand-muted text-sm col-span-3 text-center py-8">Нет фото-отчётов</p>}
         {photos.map((p) => (
@@ -89,9 +116,9 @@ function PhotosPage() {
               <div className="text-xs text-brand-muted mt-1">{formatDate(p.created_at)} {formatTime(p.created_at)}</div>
               <div className="mt-2 flex items-center justify-between">
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge[p.status] ?? statusBadge.pending}`}>{p.status}</span>
-                {p.status === "pending" && (
+                {canReview && p.status === "pending" && (
                   <div className="flex gap-1">
-                    <button onClick={() => approve(p.id)} className="p-1.5 rounded-lg bg-green-50 text-status-green hover:bg-green-100 border border-green-200">
+                    <button onClick={() => approve(p.id)} disabled={savingId === p.id} className="p-1.5 rounded-lg bg-green-50 text-status-green hover:bg-green-100 border border-green-200 disabled:opacity-50">
                       <CheckCircle size={15} />
                     </button>
                     <button onClick={() => { setRejectModal(p.id); setRejectReason(""); }} className="p-1.5 rounded-lg bg-red-50 text-status-red hover:bg-red-100 border border-red-200">
@@ -116,7 +143,7 @@ function PhotosPage() {
               className="w-full px-3 py-2 border border-brand-border rounded-xl text-sm bg-brand-bg resize-none h-24"
               placeholder="Укажите причину..." />
             <div className="flex gap-2">
-              <button onClick={() => reject(rejectModal)} disabled={!rejectReason.trim()}
+              <button onClick={() => reject(rejectModal)} disabled={!rejectReason.trim() || savingId === rejectModal}
                 className="flex-1 bg-status-red text-white py-2.5 rounded-xl text-sm font-medium disabled:opacity-50">Отклонить</button>
               <button onClick={() => setRejectModal(null)}
                 className="flex-1 border border-brand-border py-2.5 rounded-xl text-sm">Отмена</button>
