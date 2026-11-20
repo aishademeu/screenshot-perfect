@@ -46,7 +46,7 @@ function AlertsPage() {
   const [assignModal, setAssignModal] = useState<Alert | null>(null);
   const [employees, setEmployees] = useState<{ id: number; name: string }[]>([]);
   const [taskForm, setTaskForm] = useState({ employeeId: 0, deadline: "" });
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);\n  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => { if (role) load(); }, [role, regionId]);
 
@@ -88,17 +88,29 @@ function AlertsPage() {
   async function assignTask() {
     if (!assignModal || !taskForm.employeeId || !taskForm.deadline) return;
     setSubmitting(true);
-    // Ensure alert status is 'detected'
-    await supabase.from("alerts").update({ status: "in_progress" }).eq("id", assignModal.id);
-    await supabase.from("tasks").upsert({
-      alert_id: assignModal.id,
-      assigned_employee_id: taskForm.employeeId,
-      deadline: new Date(taskForm.deadline).toISOString(),
-      status: "assigned",
-    });
-    setAssignModal(null);
-    setSubmitting(false);
-    await load();
+    setActionError(null);
+    try {
+      const { error: alertError } = await supabase
+        .from("alerts")
+        .update({ status: "in_progress" })
+        .eq("id", assignModal.id);
+      if (alertError) throw alertError;
+
+      const { error: taskError } = await supabase.from("tasks").upsert({
+        alert_id: assignModal.id,
+        assigned_employee_id: taskForm.employeeId,
+        deadline: new Date(taskForm.deadline).toISOString(),
+        status: "assigned",
+      }, { onConflict: "alert_id" });
+      if (taskError) throw taskError;
+
+      setAssignModal(null);
+      await load();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Не удалось назначить задачу.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-brand-primary" size={32} /></div>;
@@ -110,7 +122,7 @@ function AlertsPage() {
         <p className="text-brand-muted text-sm mt-1">Автоматически обнаруженные проблемы</p>
       </div>
 
-      <div className="flex gap-2 border-b border-brand-border">
+      {actionError && <p role="alert" className="text-sm text-status-red bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}\n\n      <div className="flex gap-2 border-b border-brand-border">
         {[["alerts", "Сигналы"], ["tasks", "Задачи"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key as any)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === key ? "border-brand-primary text-brand-primary" : "border-transparent text-brand-muted"}`}>
