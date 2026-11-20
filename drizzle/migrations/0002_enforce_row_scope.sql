@@ -293,3 +293,61 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+
+-- Restrict column-level writes. The base migration granted table-level UPDATE
+-- and INSERT, which would otherwise override the intended column restrictions.
+REVOKE UPDATE ON public.planned_visits FROM authenticated;
+GRANT UPDATE (completed_at) ON public.planned_visits TO authenticated;
+
+REVOKE INSERT, UPDATE ON public.visits FROM authenticated;
+GRANT INSERT (outlet_id, user_id, latitude, longitude, accuracy, verified, checklist)
+  ON public.visits TO authenticated;
+
+REVOKE INSERT, UPDATE ON public.photo_reports FROM authenticated;
+GRANT INSERT (outlet_id, user_id, storage_path, status)
+  ON public.photo_reports TO authenticated;
+GRANT UPDATE (status, rejection_reason) ON public.photo_reports TO authenticated;
+
+REVOKE UPDATE ON public.alerts FROM authenticated;
+GRANT UPDATE (status) ON public.alerts TO authenticated;
+
+REVOKE INSERT, UPDATE ON public.tasks FROM authenticated;
+GRANT INSERT (alert_id, assigned_employee_id, deadline, status),
+      UPDATE (assigned_employee_id, deadline, status)
+  ON public.tasks TO authenticated;
+
+-- Private photo storage: upload and cleanup are limited to the caller's folder.
+-- Managers can read only files that belong to reports in their assigned region.
+DROP POLICY IF EXISTS photo_reports_upload_own ON storage.objects;
+CREATE POLICY photo_reports_upload_own ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'photo-reports'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS photo_reports_read_scoped ON storage.objects;
+CREATE POLICY photo_reports_read_scoped ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'photo-reports'
+    AND (
+      (storage.foldername(name))[1] = auth.uid()::text
+      OR EXISTS (
+        SELECT 1
+        FROM public.photo_reports p
+        JOIN public.retail_outlets o ON o.id = p.outlet_id
+        WHERE p.storage_path = name
+          AND public.is_manager(o.region_id)
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS photo_reports_delete_own ON storage.objects;
+CREATE POLICY photo_reports_delete_own ON storage.objects
+  FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'photo-reports'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
