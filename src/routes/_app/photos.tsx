@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useSession } from "@/hooks/useSession";
+import { canReviewPhotos } from "@/lib/roles";
 import { formatDate, formatTime } from "@/lib/format";
 import { Camera, CheckCircle, XCircle, Loader2 } from "lucide-react";
 
@@ -17,6 +18,7 @@ interface PhotoReport {
 
 function PhotosPage() {
   const { role, regionId } = useSession();
+  const canReview = canReviewPhotos(role);
   const [photos, setPhotos] = useState<PhotoReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectModal, setRejectModal] = useState<string | null>(null);
@@ -30,14 +32,24 @@ function PhotosPage() {
     setLoading(true);
     let oq = supabase.from("retail_outlets").select("id, name");
     if (role === "rd" && regionId) oq = oq.eq("region_id", regionId);
-    const { data: outlets } = await oq;
+    const { data: outlets, error: outletsError } = await oq;
+    if (outletsError) {
+      setActionError("Не удалось загрузить торговые точки: " + outletsError.message);
+      setLoading(false);
+      return;
+    }
     const oMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
     const oids = (outlets ?? []).map((o) => o.id);
 
-    const { data: pData } = await supabase
+    const { data: pData, error: photosError } = await supabase
       .from("photo_reports").select("*")
       .in("outlet_id", oids.length ? oids : [0])
       .order("created_at", { ascending: false }).limit(50);
+    if (photosError) {
+      setActionError("Не удалось загрузить фотоотчёты: " + photosError.message);
+      setLoading(false);
+      return;
+    }
 
     const withUrls = await Promise.all((pData ?? []).map(async (p) => {
       const { data } = await supabase.storage.from("photo-reports").createSignedUrl(p.storage_path, 3600);
@@ -104,7 +116,7 @@ function PhotosPage() {
               <div className="text-xs text-brand-muted mt-1">{formatDate(p.created_at)} {formatTime(p.created_at)}</div>
               <div className="mt-2 flex items-center justify-between">
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge[p.status] ?? statusBadge.pending}`}>{p.status}</span>
-                {p.status === "pending" && (
+                {canReview && p.status === "pending" && (
                   <div className="flex gap-1">
                     <button onClick={() => approve(p.id)} disabled={savingId === p.id} className="p-1.5 rounded-lg bg-green-50 text-status-green hover:bg-green-100 border border-green-200 disabled:opacity-50">
                       <CheckCircle size={15} />
