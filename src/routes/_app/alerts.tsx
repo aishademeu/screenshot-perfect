@@ -173,7 +173,7 @@ function AlertsPage() {
                       Назначить
                     </button>
                   )}
-                  {a.status !== "resolved" && (
+                  {canAssignTasks(role) && a.status !== "resolved" && (
                     <button onClick={() => resolveAlert(a.id)}
                       className="text-xs px-3 py-1.5 border border-brand-border rounded-lg text-brand-muted hover:border-brand-primary">
                       Решено
