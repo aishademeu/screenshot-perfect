@@ -38,3 +38,37 @@ CREATE POLICY photo_review_manager ON public.photo_reports
         AND public.is_manager(o.region_id)
     )
   );
+
+
+-- Employees must see tasks assigned to them, even when the originating alert
+-- belongs to a different employee in the same region.
+DROP POLICY IF EXISTS task_scope_read ON public.tasks;
+CREATE POLICY task_scope_read ON public.tasks
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.alerts a
+      WHERE a.id = alert_id
+        AND (
+          public.can_scope(a.region_id, a.employee_id)
+          OR public.can_scope(a.region_id, assigned_employee_id)
+        )
+    )
+  );
+
+DROP POLICY IF EXISTS event_scope_read ON public.task_events;
+CREATE POLICY event_scope_read ON public.task_events
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.tasks t
+      JOIN public.alerts a ON a.id = t.alert_id
+      WHERE t.id = task_id
+        AND (
+          public.can_scope(a.region_id, a.employee_id)
+          OR public.can_scope(a.region_id, t.assigned_employee_id)
+        )
+    )
+  );
