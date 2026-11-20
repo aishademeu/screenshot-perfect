@@ -22,6 +22,13 @@
       "when": 1795170000000,
       "tag": "0002_enforce_row_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795171000000,
+      "tag": "0003_fix_photo_storage_scope",
+      "breakpoints": true
     }
   ]
 }
