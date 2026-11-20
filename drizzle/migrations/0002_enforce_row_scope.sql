@@ -338,7 +338,7 @@ CREATE POLICY photo_reports_read_scoped ON storage.objects
         SELECT 1
         FROM public.photo_reports p
         JOIN public.retail_outlets o ON o.id = p.outlet_id
-        WHERE p.storage_path = objects.name
+        WHERE p.storage_path = name
           AND public.is_manager(o.region_id)
       )
     )
