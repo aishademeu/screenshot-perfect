@@ -16,6 +16,7 @@ interface Stop {
   latitude: number | null;
   longitude: number | null;
   checkedIn: boolean;
+  plannedVisitId: string | null;
   checkinDistance?: number;
   photoSubmitted: boolean;
 }
@@ -57,8 +58,9 @@ function RoutePage() {
 
       const { data: visits, error: visitsError } = await supabase
         .from("planned_visits")
-        .select("outlet_id, completed_at")
-        .in("outlet_id", outletIds);
+        .select("id, outlet_id, scheduled_at, completed_at")
+        .in("outlet_id", outletIds)
+        .order("scheduled_at", { ascending: true });
       if (visitsError) throw visitsError;
 
       const { data: photos, error: photosError } = await supabase
@@ -68,12 +70,22 @@ function RoutePage() {
         .eq("user_id", user?.id ?? "");
       if (photosError) throw photosError;
 
-      const visitMap = new Map((visits ?? []).map((visit) => [visit.outlet_id, !!visit.completed_at]));
+      const visitMap = new Map<number, { completed: boolean; plannedVisitId: string | null }>();
+      for (const visit of visits ?? []) {
+        const current = visitMap.get(visit.outlet_id);
+        if (!current || (!visit.completed_at && current.completed)) {
+          visitMap.set(visit.outlet_id, {
+            completed: !!visit.completed_at,
+            plannedVisitId: visit.completed_at ? null : visit.id,
+          });
+        }
+      }
       const photoMap = new Map((photos ?? []).map((photo) => [photo.outlet_id, true]));
 
       setStops((outlets ?? []).map((outlet) => ({
         ...outlet,
-        checkedIn: visitMap.get(outlet.id) ?? false,
+        checkedIn: visitMap.get(outlet.id)?.completed ?? false,
+        plannedVisitId: visitMap.get(outlet.id)?.plannedVisitId ?? null,
         photoSubmitted: photoMap.get(outlet.id) ?? false,
       })));
     } catch (error) {
@@ -132,17 +144,21 @@ function RoutePage() {
           });
           if (visitError) throw visitError;
 
-          const { error: planError } = await supabase
-            .from("planned_visits")
-            .update({ completed_at: new Date().toISOString() })
-            .eq("outlet_id", stop.id)
-            .is("completed_at", null);
-          if (planError) {
-            setActionError("Визит сохранён, но статус планового посещения не обновился. Обновите маршрут.");
-            return;
+          if (stop.plannedVisitId) {
+            const { data: completedVisit, error: planError } = await supabase
+              .from("planned_visits")
+              .update({ completed_at: new Date().toISOString() })
+              .eq("id", stop.plannedVisitId)
+              .is("completed_at", null)
+              .select("id")
+              .maybeSingle();
+            if (planError) throw planError;
+            if (!completedVisit) {
+              throw new Error("Плановый визит уже завершён или больше недоступен. Обновите маршрут.");
+            }
           }
           setStops((prev) => prev.map((item) => item.id === stop.id
-            ? { ...item, checkedIn: true, checkinDistance: dist }
+            ? { ...item, checkedIn: true, plannedVisitId: null, checkinDistance: dist }
             : item));
         } catch (error) {
           setActionError(error instanceof Error ? error.message : "Не удалось сохранить визит.");
