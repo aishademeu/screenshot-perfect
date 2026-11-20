@@ -118,3 +118,27 @@ CREATE POLICY event_scope_read ON public.task_events
         AND public.can_scope(a.region_id, e.id)
     )
   );
+
+
+-- Allow an authenticated employee to complete only planned visits within
+-- their assigned employee/region scope. The client may update completion time,
+-- but cannot alter the outlet or schedule.
+GRANT UPDATE (completed_at) ON public.planned_visits TO authenticated;
+CREATE POLICY planned_visit_complete_own_scope ON public.planned_visits
+  FOR UPDATE TO authenticated
+  USING (
+    completed_at IS NULL
+    AND EXISTS (
+      SELECT 1 FROM public.retail_outlets o
+      WHERE o.id = outlet_id
+        AND public.can_scope(o.region_id, o.employee_id)
+    )
+  )
+  WITH CHECK (
+    completed_at IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM public.retail_outlets o
+      WHERE o.id = outlet_id
+        AND public.can_scope(o.region_id, o.employee_id)
+    )
+  );
